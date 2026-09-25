@@ -19,18 +19,25 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Unzip & Structure Project
+    - name: Unzip Project
       run: |
         unzip -o voltcharge.zip
-        if [ ! -f "gradlew" ]; then
-          DIR=$(dirname $(find . -name "gradlew" | head -n 1))
-          if [ -d "$DIR" ] && [ "$DIR" != "." ]; then
-            cp -r $DIR/* .
-            cp -r $DIR/.* . 2>/dev/null || true
+        GRADLEW_PATH=$(find . -name "gradlew" | head -n 1)
+        if [ -n "$GRADLEW_PATH" ]; then
+          DIR=$(dirname "$GRADLEW_PATH")
+          if [ "$DIR" != "." ]; then
+            cp -r "$DIR"/* . 2>/dev/null || true
+            cp -r "$DIR"/.* . 2>/dev/null || true
           fi
         fi
 
-    - name: Fix gradle syntax & setup config
+    - name: Setup Gradle Wrapper if missing
+      run: |
+        if [ ! -f "gradlew" ]; then
+          gradle wrapper
+        fi
+
+    - name: Fix Gradle syntax & Google Services config
       run: |
         mkdir -p app
         if [ -f "google-services.json" ]; then
@@ -50,3 +57,4 @@ jobs:
       with:
         name: app-debug
         path: app/build/outputs/apk/debug/app-debug.apk
+        
