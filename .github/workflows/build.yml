@@ -45,13 +45,13 @@ jobs:
 
     - name: Auto-Sync Firebase Package Name & Place JSON
       run: |
-        python3 -c '
+        cat << 'EOF' > sync.py
         import os, json, glob, re
 
         os.makedirs("app", exist_ok=True)
         target = "app/google-services.json"
 
-        # 1. Find and copy google-services.json
+        # 1. Copy google-services.json to app/
         json_files = glob.glob("**/google-services.json", recursive=True)
         if json_files:
             src = os.path.abspath(json_files[0])
@@ -62,7 +62,7 @@ jobs:
                 with open(dst, "w", encoding="utf-8") as f_out:
                     f_out.write(content)
 
-        # 2. Extract package name from google-services.json
+        # 2. Extract package name
         pkg_name = None
         if os.path.exists(target):
             try:
@@ -74,7 +74,7 @@ jobs:
 
         print(f"--> Firebase Package Name: {pkg_name}")
 
-        # 3. Replace package name in gradle and manifest files
+        # 3. Update gradle and manifest files safely
         if pkg_name:
             for root, _, files in os.walk("."):
                 if ".git" in root or "build" in root:
@@ -85,16 +85,16 @@ jobs:
                         with open(filepath, "r", encoding="utf-8") as f:
                             text = f.read()
 
-                        new_text = re.sub(r"com\.example\.[a-zA-Z0-9_.]*", pkg_name, text)
-                        new_text = re.sub(r"(applicationId\s*=?\s*[\"']).*?([\"'])", r"\g<1>" + pkg_name + r"\2", new_text)
-                        new_text = re.sub(r"(namespace\s*=?\s*[\"']).*?([\"'])", r"\g<1>" + pkg_name + r"\2", new_text)
+                        text = re.sub(r'com\.example\.[a-zA-Z0-9_.]*', pkg_name, text)
+                        text = re.sub(r'applicationId\s*=?\s*["\'].*?["\']', f'applicationId = "{pkg_name}"', text)
+                        text = re.sub(r'namespace\s*=?\s*["\'].*?["\']', f'namespace = "{pkg_name}"', text)
 
-                        if new_text != text:
-                            with open(filepath, "w", encoding="utf-8") as f:
-                                f.write(new_text)
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(text)
 
             print("--> Package name synced successfully!")
-        '
+        EOF
+        python3 sync.py
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
