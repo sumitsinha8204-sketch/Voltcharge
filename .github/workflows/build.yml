@@ -37,20 +37,49 @@ jobs:
           gradle wrapper
         fi
 
-    - name: Place google-services.json & Fix Gradle syntax
+    - name: Auto-Sync Firebase Package Name & Place JSON
       run: |
-        mkdir -p app
-        GJSON=$(find . -name "google-services.json" | head -n 1)
-        if [ -n "$GJSON" ]; then
-          cp "$GJSON" app/google-services.json
-        fi
-        
-        if [ -f "app/build.gradle.kts" ]; then
-          sed -i 's/applicationId "com.sumitsinha.voltcharge"/applicationId = "com.sumitsinha.voltcharge"/g' app/build.gradle.kts
-        fi
-        if [ -f "app/build.gradle" ]; then
-          sed -i 's/applicationId "com.sumitsinha.voltcharge"/applicationId = "com.sumitsinha.voltcharge"/g' app/build.gradle
-        fi
+        python3 -c '
+        import os, json, re, glob
+
+        # 1. Move google-services.json to app/ directory
+        json_files = glob.glob("**/google-services.json", recursive=True)
+        os.makedirs("app", exist_ok=True)
+        target = "app/google-services.json"
+        if json_files:
+            if os.path.abspath(json_files[0]) != os.path.abspath(target):
+                with open(json_files[0], "r") as src, open(target, "w") as dst:
+                    dst.write(src.read())
+
+        # 2. Extract real package name from Firebase JSON
+        pkg_name = None
+        if os.path.exists(target):
+            try:
+                with open(target) as f:
+                    data = json.load(f)
+                    pkg_name = data["client"][0]["client_info"]["android_client_info"]["package_name"]
+            except Exception as e:
+                print("JSON parsing error:", e)
+
+        print(f"--> Detected Firebase Package Name: {pkg_name}")
+
+        # 3. Sync extracted package name into all Gradle & Manifest files
+        if pkg_name:
+            for root, dirs, files in os.walk("app"):
+                for file in files:
+                    if file in ["build.gradle", "build.gradle.kts", "AndroidManifest.xml"]:
+                        filepath = os.path.join(root, file)
+                        with open(filepath, "r") as f:
+                            content = f.read()
+
+                        content = re.sub(r"applicationId\s*=?\s*[\"'].*?[\"']", f"applicationId = \"{pkg_name}\"", content)
+                        content = re.sub(r"namespace\s*=?\s*[\"'].*?[\"']", f"namespace = \"{pkg_name}\"", content)
+                        content = re.sub(r"com\.example\.[a-zA-Z0-9_.]*", pkg_name, content)
+
+                        with open(filepath, "w") as f:
+                            f.write(content)
+            print("--> Package name successfully synced across all project files!")
+        '
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
