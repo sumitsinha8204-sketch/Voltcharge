@@ -5,6 +5,10 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
 
+env:
+  JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false -Djava.awt.headless=true -Dkotlin.compiler.execution.strategy=in-process"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -31,30 +35,34 @@ jobs:
           fi
         fi
 
-    - name: Setup Gradle Wrapper if missing
+    - name: Setup Gradle Wrapper & Properties
       run: |
         if [ ! -f "gradlew" ]; then
           gradle wrapper
         fi
+        echo "org.gradle.jvmargs=-Xmx2048m -Djava.awt.headless=true" >> gradle.properties
+        echo "ksp.incremental=false" >> gradle.properties
 
-    - name: Auto-Sync Firebase Package Name & Fix KSP Flags
+    - name: Auto-Sync Firebase Package Name & Place JSON
       run: |
-        cat << 'EOF' > sync.py
+        python3 -c '
         import os, json, glob, re
 
-        target = "app/google-services.json"
         os.makedirs("app", exist_ok=True)
+        target = "app/google-services.json"
+
+        # 1. Find and copy google-services.json
         json_files = glob.glob("**/google-services.json", recursive=True)
-
         if json_files:
-            src_path = os.path.abspath(json_files[0])
-            dst_path = os.path.abspath(target)
-            if src_path != dst_path:
-                with open(src_path, "r", encoding="utf-8") as f_src:
-                    data_content = f_src.read()
-                with open(dst_path, "w", encoding="utf-8") as f_dst:
-                    f_dst.write(data_content)
+            src = os.path.abspath(json_files[0])
+            dst = os.path.abspath(target)
+            if src != dst:
+                with open(src, "r", encoding="utf-8") as f_in:
+                    content = f_in.read()
+                with open(dst, "w", encoding="utf-8") as f_out:
+                    f_out.write(content)
 
+        # 2. Extract package name from google-services.json
         pkg_name = None
         if os.path.exists(target):
             try:
@@ -62,52 +70,40 @@ jobs:
                     data = json.load(f)
                     pkg_name = data["client"][0]["client_info"]["android_client_info"]["package_name"]
             except Exception as e:
-                print("Error reading google-services.json:", e)
+                print("JSON parsing error:", e)
 
         print(f"--> Firebase Package Name: {pkg_name}")
 
+        # 3. Replace package name in gradle and manifest files
         if pkg_name:
-            for root, _, files in os.walk("app"):
+            for root, _, files in os.walk("."):
+                if ".git" in root or "build" in root:
+                    continue
                 for file in files:
                     if file in ["build.gradle", "build.gradle.kts", "AndroidManifest.xml"]:
                         filepath = os.path.join(root, file)
                         with open(filepath, "r", encoding="utf-8") as f:
-                            lines = f.readlines()
-                        
-                        new_lines = []
-                        for line in lines:
-                            if "applicationId" in line and "=" in line:
-                                line = f'        applicationId = "{pkg_name}"\n'
-                            elif "applicationId" in line and "=" not in line:
-                                line = f'        applicationId "{pkg_name}"\n'
-                            elif "namespace" in line and "=" in line:
-                                line = f'        namespace = "{pkg_name}"\n'
-                            elif "namespace" in line and "=" not in line:
-                                line = f'        namespace "{pkg_name}"\n'
-                            else:
-                                line = re.sub(r'com\.example\.[a-zA-Z0-9_.]*', pkg_name, line)
-                            new_lines.append(line)
+                            text = f.read()
 
-                        with open(filepath, "w", encoding="utf-8") as f:
-                            f.writelines(new_lines)
+                        new_text = re.sub(r"com\.example\.[a-zA-Z0-9_.]*", pkg_name, text)
+                        new_text = re.sub(r"(applicationId\s*=?\s*[\"']).*?([\"'])", r"\g<1>" + pkg_name + r"\2", new_text)
+                        new_text = re.sub(r"(namespace\s*=?\s*[\"']).*?([\"'])", r"\g<1>" + pkg_name + r"\2", new_text)
+
+                        if new_text != text:
+                            with open(filepath, "w", encoding="utf-8") as f:
+                                f.write(new_text)
 
             print("--> Package name synced successfully!")
-        EOF
-        python3 sync.py
-
-        # Fix KSP annotation processor issues on CI
-        echo "ksp.incremental=false" >> gradle.properties
-        echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
+        '
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
     - name: Build Debug APK
-      run: ./gradlew assembleDebug --no-daemon --stacktrace
+      run: ./gradlew assembleDebug --stacktrace --no-daemon
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
         path: app/build/outputs/apk/debug/app-debug.apk
-        
