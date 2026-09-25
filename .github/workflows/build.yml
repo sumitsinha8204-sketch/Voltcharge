@@ -37,24 +37,29 @@ jobs:
           gradle wrapper
         fi
 
-    - name: Fix Gradle syntax & Google Services config
+    - name: Place google-services.json & Fix Gradle syntax
       run: |
         mkdir -p app
-        if [ -f "google-services.json" ]; then
-          cp google-services.json app/
+        GJSON=$(find . -name "google-services.json" | head -n 1)
+        if [ -n "$GJSON" ]; then
+          cp "$GJSON" app/google-services.json
         fi
-        sed -i 's/applicationId "com.sumitsinha.voltcharge"/applicationId = "com.sumitsinha.voltcharge"/g' app/build.gradle.kts || true
-        sed -i 's/applicationId "com.sumitsinha.voltcharge"/applicationId = "com.sumitsinha.voltcharge"/g' app/build.gradle || true
+        
+        if [ -f "app/build.gradle.kts" ]; then
+          sed -i 's/applicationId "com.sumitsinha.voltcharge"/applicationId = "com.sumitsinha.voltcharge"/g' app/build.gradle.kts
+        fi
+        if [ -f "app/build.gradle" ]; then
+          sed -i 's/applicationId "com.sumitsinha.voltcharge"/applicationId = "com.sumitsinha.voltcharge"/g' app/build.gradle
+        fi
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
     - name: Build Debug APK
-      run: ./gradlew assembleDebug
+      run: ./gradlew assembleDebug --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
         path: app/build/outputs/apk/debug/app-debug.apk
-        
